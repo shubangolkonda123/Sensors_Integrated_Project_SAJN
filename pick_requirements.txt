@@ -1,0 +1,7 @@
+mujoco
+numpy
+scipy
+roboticstoolbox-python
+opencv-contrib-python
+open3d
+matplotlib

@@ -115,8 +115,13 @@
                   <site name="attachment_site" pos="0 0.09215 0" quat="-1 1 0 0"/>
                   <!-- Simple prototype gripper attached to the wrist -->
 <body name="gripper" pos="0 0.09215 0" quat="-1 1 0 0">
-
-  <!-- Fixed palm -->
+  <!-- Wrist-mounted camera, looking along the fingers -->
+  <camera name="wrist_camera"
+          mode="fixed"
+          pos="0 0.055 0.025"
+          xyaxes="1 0 0  0 -1 0"
+          fovy="60"/>
+    <!-- Fixed palm -->
   <geom name="gripper_palm"
         type="box"
         pos="0 0 0.015"
@@ -180,7 +185,7 @@
         rgba="0.6 0.4 0.2 1"/>
 
     <!-- Movable target: 4 cm cube, mass 50 g -->
-  <body name="target_block" pos="0.35 0 0.246">
+  <body name="target_block" pos="0.3 0.1 0.246">
     <freejoint name="target_block_joint"/>
 
     <geom name="target_block_geom"
@@ -233,8 +238,8 @@
 
   <keyframe>
     <key name="home"
-         qpos="-1.5708 -1.5708 1.5708 -1.5708 -1.5708 0  0.03 0.03  0.35 0 0.246  1 0 0 0"
-         ctrl="-1.5708 -1.5708 1.5708 -1.5708 -1.5708 0  0.03 0.03"/>
+         qpos="-2.89 -1.51 0.0619 -2.6 1.76 -2.37e-07  0.03 0.03  0.3 0.1 0.246  1 0 0 0"
+         ctrl=" -2.89 -1.51 0.0619 -2.6 1.76 0  0.03 0.03"/>
   </keyframe>
 
 </mujoco>

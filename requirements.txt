@@ -1,0 +1,10 @@
+numpy>=1.24
+scipy>=1.10
+opencv-python>=4.8,<5   # 4.x still has calibrateHandEye in Python
+matplotlib>=3.7
+pandas>=2.0
+# Real hardware (UTS lab: UR3e + RG2 + D435i):
+ur_rtde>=1.5
+pyrealsense2>=2.54
+# RG2 gripper library used by the lab (needs Git installed):
+#   pip install "git+https://github.com/RianPolMacCionaoith/onRobot.git@main#subdirectory=onRobot"

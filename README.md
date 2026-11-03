@@ -4,8 +4,8 @@
 
 **Group Number:** Project 54
 * Shuban Golkonda (25892908) -
-* Jaylee Ah Hen (student number)
-* Nicole Paligies (student number)
-* Aaron (student number)
+* Jaylee Ah Hen (25871310)
+* Nicole Paligies (25872161)
+* Aaron (25872995)
 
 * 

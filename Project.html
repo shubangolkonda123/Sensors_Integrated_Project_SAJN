@@ -62,20 +62,6 @@
   </div>
 </section>
 
-<!-- ===================== SUMMARY ===================== -->
-<section class="section">
-  <div class="container is-max-desktop">
-    <div class="columns is-centered has-text-centered">
-      <div class="column is-four-fifths">
-        <h2 class="title is-3">Summary</h2>
-        <div class="content has-text-justified">
-          <p class="todo">text</p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <!-- ===================== VIDEO ===================== -->
 <section class="section" id="video">
   <div class="container is-max-desktop">
@@ -247,7 +233,102 @@
       <div class="column is-full-width">
         <h2 class="title is-3">D. Control</h2>
         <div class="content has-text-justified">
-          <p class="todo">innter loop lqr</p>
+          <p>
+            Control is implemented in <code>moving_block_pick.py</code> in two layers. A task layer turns the
+            block estimate into joint-space reference trajectories, and a discrete LQR running at 100 Hz tracks
+            those references using the joint Kalman filter estimate. The controller acts only on estimated
+            states, and simulator ground truth is read only by the evaluation logger.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Plant Model for Control</h3>
+        <div class="content has-text-justified">
+          <p>
+            The UR3e joints in the MuJoCo model are driven by position servos with stiffness k<sub>p</sub> and
+            damping k<sub>d</sub> taken from the XML actuator parameters. With the arm inertia matrix M evaluated at
+            the initial configuration and gravity compensated separately, the 12-state model is
+          </p>
+          <pre>x = [q, q&#775;]<sup>T</sup>,   u = commanded joint position (6)
+
+A = [[0, I], [&minus;M<sup>&minus;1</sup>K<sub>p</sub>, &minus;M<sup>&minus;1</sup>K<sub>d</sub>]],   B = [[0], [M<sup>&minus;1</sup>K<sub>p</sub>]],   C = [I, 0]</pre>
+          <p>
+            The model is discretised with a zero-order hold at dt = 0.01 s using <code>cont2discrete</code>. The
+            controllability and observability matrices both have full rank 12. The slow open-loop modes lie at
+            about &minus;5 rad/s, set by the servo damping acting on the arm inertia.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Discrete LQR</h3>
+        <div class="content has-text-justified">
+          <p>
+            The gain K (6 &times; 12) is obtained from the discrete algebraic Riccati equation
+            (<code>solve_discrete_are</code>) with
+          </p>
+          <pre>Q = diag(400 &middot; I<sub>6</sub>, 1 &middot; I<sub>6</sub>),    R = 0.5 &middot; I<sub>6</sub></pre>
+          <p>
+            Position error is weighted 400 times more than velocity error, so the controller prioritises reaching
+            the reference angle, while R limits how far the command departs from the reference. The control law
+            regulates the estimated state about the reference with zero reference velocity:
+          </p>
+          <pre>u = q<sub>ref</sub> &minus; K (x&#770; &minus; [q<sub>ref</sub>, 0]<sup>T</sup>)</pre>
+          <p>
+            The position gains on the diagonal are between 2.76 and 3.19, with coupling terms between joints
+            because M is not diagonal. The largest closed-loop eigenvalue magnitude is 0.818, which corresponds
+            to about &minus;20 rad/s. The LQR therefore makes the dominant modes about four times faster than the
+            open-loop servo response.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Command Limits and Gravity Compensation</h3>
+        <div class="content has-text-justified">
+          <ul>
+            <li>The command is limited to &plusmn;0.15 rad from the reference, so the feedback correction cannot
+              drive the arm far from the planned path.</li>
+            <li>The change in command is limited to 0.012 rad per step (1.2 rad/s), which bounds joint speed and
+              actuator effort.</li>
+            <li>The command is clipped to the joint limits of the model.</li>
+            <li>Gravity and bias forces are computed from the <em>estimated</em> joint state in a separate model
+              copy and applied as a feedforward torque.</li>
+          </ul>
+          <p>
+            The limited command is the one fed back to the joint Kalman filter prediction, so the estimator uses
+            the input that was actually applied.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Tracking the Moving Block</h3>
+        <div class="content has-text-justified">
+          <p>
+            The block moves in the &minus;y direction at 18 mm/s for 12 s (about 0.22 m) and then stops. While
+            it moves, a constant velocity EKF with state [p, v] (6 states) fuses the depth-based block
+            measurements every 0.1 s. The arm follows the block with position-based visual servoing (PBVS):
+            the hover goal is the EKF position estimate raised by 10 cm, and a new 0.8 s joint trajectory to that
+            goal is planned every 0.5 s. Joint goals come from numerical inverse kinematics
+            (<code>scipy.optimize.least_squares</code>) with a fixed downward gripper orientation, and
+            trajectories are generated by quintic interpolation (<code>roboticstoolbox.jtraj</code>).
+          </p>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>State</th><th>Control behaviour</th></tr></thead>
+            <tbody>
+              <tr><td>TRACK</td><td>Hover 10 cm above the EKF block estimate and replan every 0.5 s. After the block stops and 0.5 s has passed, lock the latest camera measurement as the grasp target once the arm has settled within 0.025 rad. Abort if the block is not acquired within 12 s or tracking exceeds 35 s.</td></tr>
+              <tr><td>DESCEND</td><td>4 s descent to the locked grasp target. Advance when the tool is within 8 mm.</td></tr>
+              <tr><td>CLOSE</td><td>Close the fingers over 1.5 s, then wait to 2.5 s.</td></tr>
+              <tr><td>LIFT / HOLD</td><td>Lift 8 cm over 4 s, then hold.</td></tr>
+            </tbody>
+          </table>
+          <p>
+            Each plan is rejected if any joint would move more than 1.5 rad, which prevents IK branch jumps, or if
+            sampled configurations along the path intersect the table. A rejected plan, a timeout or a lost
+            target moves the task to ABORT, which holds the estimated current position.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Control Results</h3>
+        <div class="content has-text-justified">
+          <p>
+ test
+          </p>
+          <p class="todo">Add the joint tracking and block EKF figures, and results for randomised start positions and block speeds.</p>
         </div>
       </div>
     </div>

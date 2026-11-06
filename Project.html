@@ -36,7 +36,7 @@
             <span class="author-block">Shuban Golkonda (25892908),</span>
             <span class="author-block">Jaylee Ah Hen (25871310),</span>
             <span class="author-block">Nicole Paligies (25872161),</span>
-            <span class="author-block">Aaron (25872995)</span>
+            <span class="author-block">Aaron Valdy (25872995)</span>
           </div>
           <div class="is-size-6 publication-authors">
             <span class="author-block">University of Technology Sydney</span>
@@ -45,7 +45,7 @@
           <div class="column has-text-centered">
             <div class="publication-links">
               <span class="link-block">
-                <a href="#" class="external-link button is-normal is-rounded is-dark">
+                <a href="https://github.com/shubangolkonda123/Sensors_Integrated_Project_SAJN" class="external-link button is-normal is-rounded is-dark">
                   <span class="icon"><i class="fab fa-github"></i></span><span>Code</span>
                 </a>
               </span>
@@ -70,7 +70,21 @@
         <h2 class="title is-3">Summary</h2>
         <div class="content has-text-justified">
           <p>
-              text here
+            A UR3e arm in MuJoCo tracks a red cube that slides across the table, then picks it up once it stops. A
+            wrist-mounted RGB-D camera is calibrated automatically at start-up with a checkerboard, and the cube is
+            located from depth by fitting the table plane and segmenting red points. Two Kalman filters estimate the
+            hidden states: a 12-state joint filter recovers joint velocities from the encoders, and a constant-velocity
+            filter tracks the cube. A discrete LQR, designed on a joint model derived from the MuJoCo dynamics and
+            validated against them, drives the arm. It uses only estimated states; simulator ground truth is used only
+            for evaluation.
+          </p>
+          <p>
+            In ten repeated trials, each with fresh noise and a fresh calibration, all ten picks succeeded. The grasp
+            target error was 0.96 mm on average (at most 1.63 mm) for a 40 mm cube. The largest error source turned out
+            to be the camera calibration: the focal length varied by 1.5% between calibrations, and the cube error
+            follows it closely (r = 0.96). The main limitations are that the cube's start position is not randomised,
+            that tracking fails when depth noise reaches 8 mm, and that the hardware pipeline has only been tested in
+            mock mode.
           </p>
         </div>
       </div>
@@ -85,7 +99,14 @@
       <div class="column is-four-fifths">
         <h2 class="title is-3">Demo Video</h2>
         <div class="content has-text-justified">
-          <p class="todo"> video embed here</p>
+          <figure class="image is-16by9">
+            <iframe class="has-ratio" src="https://www.youtube.com/embed/a1O7m_z22mk" title="Project 54 demo video"
+                    frameborder="0" referrerpolicy="strict-origin-when-cross-origin"
+                    allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+          </figure>
+          <p class="has-text-centered">
+            If the player does not load, <a href="https://youtu.be/a1O7m_z22mk">watch the video on YouTube</a>.
+          </p>
         </div>
       </div>
     </div>
@@ -101,7 +122,273 @@
       <div class="column is-full-width">
         <h2 class="title is-3">A. Modelling</h2>
         <div class="content has-text-justified">
-          <p class="todo">write here</p>
+          <p>
+            Two models are used. The <strong>joint model</strong> describes how the six UR3e joints respond to
+            the commanded joint angles; the joint Kalman filter (Part C) and the LQR (Part D) are both built on it.
+            The <strong>cube model</strong> describes how the target moves between camera frames and is used by
+            the cube filter. All numbers in this section are produced by
+            <code>final_simulation/model_analysis.py</code>, which rebuilds the model exactly as
+            <code>moving_block_pick.py</code> does and writes them to <code>model_analysis_results.json</code>.
+            As a check, it reproduces the LQR values reported in Part D (position gains 2.76 to 3.19, closed-loop
+            spectral radius 0.818).
+          </p>
+        </div>
+
+        <h3 class="title is-4">States, Input and Output</h3>
+        <div class="content has-text-justified">
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Symbol</th><th>Meaning</th><th>Size</th><th>Measured?</th></tr></thead>
+            <tbody>
+              <tr><td>q</td><td>Joint angles (pan, lift, elbow, wrist 1, wrist 2, wrist 3)</td><td>6</td><td>Yes, encoders (&sigma; = 0.5 mrad)</td></tr>
+              <tr><td>q&#775;</td><td>Joint velocities</td><td>6</td><td>No, estimated by the observer</td></tr>
+              <tr><td>u</td><td>Commanded joint angles sent to the MuJoCo position servos</td><td>6</td><td>Known input</td></tr>
+              <tr><td>y = q</td><td>Encoder measurement</td><td>6</td><td>&ndash;</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="title is-4">Derivation of the Joint Model</h3>
+        <div class="content has-text-justified">
+          <p>
+            The arm obeys the rigid-body equation of motion. Each joint is driven by a MuJoCo <code>general</code>
+            actuator with an affine bias, which is a PD position servo, and the controller adds a feedforward torque
+            equal to the gravity and Coriolis terms computed from the estimated state (Part D):
+          </p>
+          <pre>M(q) q&#776; + c(q, q&#775;) + g(q) = &tau;<sub>servo</sub> + &tau;<sub>ff</sub>
+
+&tau;<sub>servo</sub> = K<sub>p</sub>(u &minus; q) &minus; K<sub>d</sub> q&#775;          &tau;<sub>ff</sub> = c(q&#770;, q&#770;&#775;) + g(q&#770;)  &asymp;  c(q, q&#775;) + g(q)</pre>
+          <p>
+            With the feedforward cancelling gravity and Coriolis terms, the remaining dynamics are
+            M(q) q&#776; = K<sub>p</sub>(u &minus; q) &minus; K<sub>d</sub> q&#775;. Freezing M at the home pose
+            q<sub>0</sub> = [&minus;2.89, &minus;1.51, 0.062, &minus;2.60, 1.76, 0] rad gives the linear
+            time-invariant model
+          </p>
+          <pre>x&#775; = A<sub>c</sub> x + B<sub>c</sub> u,    y = C x,    x = [q, q&#775;]<sup>T</sup>
+
+A<sub>c</sub> = [[0, I], [&minus;M<sub>0</sub><sup>&minus;1</sup>K<sub>p</sub>, &minus;M<sub>0</sub><sup>&minus;1</sup>K<sub>d</sub>]],    B<sub>c</sub> = [[0], [M<sub>0</sub><sup>&minus;1</sup>K<sub>p</sub>]],    C = [I, 0]</pre>
+          <p>
+            This is discretised with a zero-order hold at dt = 0.01 s (the controller holds u between updates).
+            The parameters come directly from <code>ur3e.xml</code>, and M<sub>0</sub> comes from
+            <code>mj_fullM</code>, which includes the 0.1 kg&middot;m&sup2; rotor armature on every joint:
+          </p>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Joint</th><th>K<sub>p</sub> (N&middot;m/rad)</th><th>K<sub>d</sub> (N&middot;m&middot;s/rad)</th><th>M<sub>0</sub> diagonal (kg&middot;m&sup2;)</th><th>Armature share of M<sub>0</sub></th><th>Torque limit (N&middot;m)</th></tr></thead>
+            <tbody>
+              <tr><td>Pan</td><td>1000</td><td>200</td><td>0.216</td><td>46%</td><td>56</td></tr>
+              <tr><td>Lift</td><td>1000</td><td>200</td><td>0.825</td><td>12%</td><td>56</td></tr>
+              <tr><td>Elbow</td><td>500</td><td>100</td><td>0.245</td><td>41%</td><td>28</td></tr>
+              <tr><td>Wrist 1</td><td>200</td><td>40</td><td>0.120</td><td>83%</td><td>12</td></tr>
+              <tr><td>Wrist 2</td><td>200</td><td>40</td><td>0.108</td><td>92%</td><td>12</td></tr>
+              <tr><td>Wrist 3</td><td>200</td><td>40</td><td>0.101</td><td>99.5%</td><td>12</td></tr>
+            </tbody>
+          </table>
+          <p>
+            M<sub>0</sub> is not diagonal: the largest normalised off-diagonal term, between pan and lift, is 0.66.
+            The model therefore couples the joints. In the validation below, a lift step moves the other joints by
+            about 1.3% of the step size.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Open-Loop Modes and What They Mean</h3>
+        <div class="content has-text-justified">
+          <p>
+            All twelve continuous-time eigenvalues are real and negative, so the plant is stable and overdamped and
+            does not overshoot. They split into two groups that can be explained physically. Each joint behaves
+            approximately like m s&sup2; + K<sub>d</sub> s + K<sub>p</sub>, and since K<sub>d</sub>&sup2; &#8811;
+            4 m K<sub>p</sub> its roots are approximately
+          </p>
+          <pre>s<sub>slow</sub> &asymp; &minus;K<sub>p</sub>/K<sub>d</sub>          s<sub>fast</sub> &asymp; &minus;K<sub>d</sub>/m</pre>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Group</th><th>Eigenvalues (rad/s)</th><th>Time constant</th><th>Set by</th></tr></thead>
+            <tbody>
+              <tr><td>Slow (6)</td><td>&minus;5.02 to &minus;5.16</td><td>0.19 to 0.20 s</td><td>K<sub>p</sub>/K<sub>d</sub> = 5 s<sup>&minus;1</sup> for <em>every</em> joint</td></tr>
+              <tr><td>Fast (6)</td><td>&minus;166 to &minus;1308</td><td>0.8 to 6 ms</td><td>K<sub>d</sub>/M, the damping acting on the inertia</td></tr>
+            </tbody>
+          </table>
+          <p>
+            Two consequences follow. First, the fast modes have mostly decayed (to below 20%) within one 10 ms
+            control period, so at the control rate each joint behaves almost like a first-order lag q&#775; = 5(u &minus; q). Second, the slow modes,
+            which govern the motion the controller actually sees, depend on the ratio of the servo gains and
+            <em>not on the inertia</em>. This is why a model linearised at a single pose works well across the
+            workspace (see below).
+          </p>
+        </div>
+
+        <h3 class="title is-4">Assumptions and Where They Break</h3>
+        <div class="content has-text-justified">
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Assumption</th><th>Evidence</th><th>When it would fail</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>M frozen at the home pose</td>
+                <td>Over 300 random poses within &plusmn;0.6 rad of home, the diagonal of M changes by a median of 28%
+                    (up to 169%), yet the slowest eigenvalue only moves between &minus;5.019 and &minus;5.027 rad/s. The
+                    home-pose LQR gain stays stable at every pose (largest |&lambda;| 0.823 against 0.818 at home).</td>
+                <td>Lower servo gains, or K<sub>d</sub>/K<sub>p</sub> differing between joints, would make the slow
+                    modes depend on inertia. This applies to the real arm, which uses a different model (below).</td>
+              </tr>
+              <tr>
+                <td>Gravity and Coriolis torques cancelled exactly</td>
+                <td>The feedforward is computed from the estimated state, whose angle error is about 0.2 mrad (Part C),
+                    so the residual torque is small.</td>
+                <td>A biased joint estimate or an unmodelled payload would leave a constant gravity error that the model
+                    does not include, showing up as a steady-state tracking offset.</td>
+              </tr>
+              <tr>
+                <td>Torque limits ignored (linear actuator)</td>
+                <td>A 0.05 rad step uses at most 17% of the torque limit. A 0.30 rad step saturates (100%) during the first
+                    10 ms control period, and the peak model error then rises from 0.2% to 2.4% of the step.</td>
+                <td>Large command jumps. In operation the command change is limited to 0.012 rad per step (Part D). A
+                    0.5 rad ramp on pan and lift at that maximum rate needs at most 9% of the torque limit, so the
+                    linear model holds in normal use.</td>
+              </tr>
+              <tr>
+                <td>Cube not part of the arm inertia</td>
+                <td>The slow modes do not depend on inertia (above), so a light payload in the gripper should barely
+                    change them.</td>
+                <td>Not tested with a grasped payload. A heavy object would add a gravity torque that the
+                    feedforward does not know about.</td>
+              </tr>
+              <tr>
+                <td>Encoder noise white and Gaussian, &sigma; = 0.5 mrad</td>
+                <td>This is exactly the noise added in simulation, so it holds by construction.</td>
+                <td>Real encoders have their own noise level, quantisation and latency, so R must be measured again on the arm.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="title is-4">Validation Against the Nonlinear Simulator</h3>
+        <div class="content has-text-justified">
+          <p>
+            The linear model was compared with the full nonlinear MuJoCo arm, including the gripper, the free cube and
+            gravity compensation applied every 10 ms. Each test applied an open-loop step in the commanded angle of
+            the heaviest joint (lift) and of a light wrist joint (wrist 2), at the home pose and at an extended pose
+            (lift +0.5 rad, elbow &minus;0.6 rad).
+          </p>
+          <figure class="image" style="margin: 1.5rem 0;">
+            <img src="./static/images/01_model_step_validation.png" alt="Linear model step responses against nonlinear MuJoCo.">
+            <figcaption class="has-text-centered is-size-6">Step responses of the nonlinear MuJoCo arm and the 12-state linear model (top), and the difference between them as a percentage of the step (bottom). Dotted lines show the first-order approximation q&#775; = 5(u &minus; q).</figcaption>
+          </figure>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Case</th><th>Joint</th><th>RMS error (% of step)</th><th>Peak error (% of step)</th><th>Rise / settle, MuJoCo vs model (s)</th></tr></thead>
+            <tbody>
+              <tr><td>0.05 rad, home</td><td>Lift</td><td>0.10</td><td>0.21</td><td>0.43 / 0.77 vs 0.43 / 0.78</td></tr>
+              <tr><td>0.05 rad, home</td><td>Wrist 2</td><td>0.09</td><td>0.18</td><td>0.43 / 0.78 vs 0.43 / 0.78</td></tr>
+              <tr><td>0.30 rad, home (saturates)</td><td>Lift</td><td>0.63</td><td>2.42</td><td>0.42 / 0.78 vs 0.43 / 0.78</td></tr>
+              <tr><td>0.30 rad, home (saturates)</td><td>Wrist 2</td><td>0.36</td><td>1.49</td><td>0.43 / 0.78 vs 0.43 / 0.78</td></tr>
+              <tr><td>0.05 rad, extended, using the <em>home</em> model</td><td>Lift</td><td>0.11</td><td>0.23</td><td>0.43 / 0.77 vs 0.43 / 0.78</td></tr>
+              <tr><td>0.05 rad, extended, using the <em>home</em> model</td><td>Wrist 2</td><td>0.09</td><td>0.18</td><td>0.43 / 0.78 vs 0.43 / 0.78</td></tr>
+            </tbody>
+          </table>
+          <p>
+            For small steps, the model matches the simulator to within 0.2% of the step. Rise time (10&ndash;90%) and
+            2% settling time agree to within 0.01 s. Using the home-pose model at the extended pose gives a lift RMS error
+            of 0.106%, almost the same as the 0.101% at home, which confirms that freezing M costs almost nothing. The
+            first-order approximation is worse: RMS 0.26 to 0.94% and peak errors up to 4.1%, with the largest
+            errors in the first 30 ms, where it misses the fast mode. The full 12-state model is kept because the joint
+            observer estimates velocity, and velocity is exactly what the first-order model gets wrong at the start
+            of a motion.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Controllability and Observability</h3>
+        <div class="content has-text-justified">
+          <p>
+            For the discrete pair (A, B) and pair (A, C), the controllability matrix
+            [B, AB, &hellip;, A<sup>11</sup>B] and the observability matrix [C; CA; &hellip;; CA<sup>11</sup>] both
+            have <strong>rank 12</strong>. The PBH test gives the same result at every eigenvalue:
+            rank [&lambda;I &minus; A, B] = rank [&lambda;I &minus; A; C] = 12. The rank only answers yes or no, so the
+            infinite-horizon Gramians were also computed to measure <em>how strongly</em> each direction can be
+            controlled or observed. The inputs were scaled by the 0.15 rad command limit and the outputs by the
+            0.5 mrad encoder noise, so the numbers are in physical units.
+          </p>
+          <ul>
+            <li><strong>Controllability.</strong> The arm is fully actuated: the lower block of B is
+                M<sub>0</sub><sup>&minus;1</sup>K<sub>p</sub>, which is invertible, so any state can be reached in two
+                steps. The Gramian condition number is 977. The weakest direction is the pan angle.</li>
+            <li><strong>Observability.</strong> Velocities are observable from angles alone because q&#775; changes
+                the next measured q. They are, however, much more weakly observable than the angles: the Gramian
+                condition number is 2.1 &times; 10<sup>7</sup>, and its weakest direction is the pan velocity. The
+                fast velocity modes decay within milliseconds, so the velocity at any instant is determined mostly by
+                q and the known input u through the model, not by the encoder history. This is why the joint filter
+                predicts with the command actually applied after limiting (Part C). Using the wrong u would bias the
+                velocity estimate directly.</li>
+          </ul>
+          <p>
+            <strong>What if an encoder fails?</strong> Removing one row of C at a time, the rank is
+            <em>still 12</em> in every case, because the inertial coupling in M<sub>0</sub> makes every joint's angle
+            affect the others' accelerations. The rank test alone would suggest the system copes. The Gramian shows
+            it does not:
+          </p>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Lost encoder</th><th>Rank</th><th>&sigma;<sub>min</sub>/&sigma;<sub>max</sub> of the observability matrix</th><th>Best achievable &sigma; on that joint's angle</th></tr></thead>
+            <tbody>
+              <tr><td>None</td><td>12</td><td>&ndash;</td><td>0.5 mrad</td></tr>
+              <tr><td>Lift</td><td>12</td><td>4.9 &times; 10<sup>&minus;5</sup></td><td>20 mrad</td></tr>
+              <tr><td>Elbow</td><td>12</td><td>2.5 &times; 10<sup>&minus;5</sup></td><td>39 mrad</td></tr>
+              <tr><td>Pan</td><td>12</td><td>1.1 &times; 10<sup>&minus;5</sup></td><td>54 mrad</td></tr>
+              <tr><td>Wrist 1</td><td>12</td><td>1.3 &times; 10<sup>&minus;5</sup></td><td>232 mrad</td></tr>
+              <tr><td>Wrist 2</td><td>12</td><td>1.3 &times; 10<sup>&minus;6</sup></td><td>1.4 rad</td></tr>
+              <tr><td>Wrist 3</td><td>12</td><td>8.4 &times; 10<sup>&minus;8</sup></td><td>&gt; 10 rad</td></tr>
+            </tbody>
+          </table>
+          <p>
+            The last column is a lower bound from the inverse of the observability Gramian, ignoring process noise,
+            so real errors would be larger still. Even the best case, 20 mrad on the lift joint, is 40 times the
+            normal error and would shift the cube estimate by about 7 mm (Part B). The wrist joints, which are almost
+            decoupled from the rest of the arm, become practically unobservable. The system therefore needs all six
+            encoders. A failed encoder should stop the task rather than be bridged by the observer.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Cube Model</h3>
+        <div class="content has-text-justified">
+          <p>
+            The cube is modelled as a point moving at constant velocity, with the camera measuring its position at
+            10 Hz:
+          </p>
+          <pre>x = [p<sub>x</sub>, p<sub>y</sub>, p<sub>z</sub>, v<sub>x</sub>, v<sub>y</sub>, v<sub>z</sub>]<sup>T</sup>,    F = [[I, &Delta;t I], [0, I]],    H = [I, 0],    &Delta;t = 0.1 s</pre>
+          <p>
+            The observability matrix of (F, H) has rank 6, so velocity can be recovered from successive positions.
+            If only x and y were measured (for example, colour without valid depth), the rank drops to 4: height and
+            vertical velocity become unobservable. This is why the localisation in Part B relies on depth.
+          </p>
+          <p>
+            <strong>When the cube leaves the view</strong>, no measurements arrive and the filter can only predict.
+            Starting from its steady-state uncertainty of 6.2 mm (with the Part C noise settings), the predicted
+            position standard deviation grows to 22 mm after 0.5 s, 43 mm after 1 s and 99 mm after 2 s, because the
+            unknown velocity is integrated. After about one second of occlusion the uncertainty is comparable to the
+            40 mm cube itself, which is too large to grasp. This supports the design choice in Part C to lock the
+            last measured position once the cube stops moving, rather than predicting blind.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Model for the Real UR3e</h3>
+        <div class="content has-text-justified">
+          <p>
+            On the real robot the input is different. The UR3e is commanded with joint <em>velocities</em>
+            (<code>speedJ</code> through <code>ur_rtde</code>), and its internal servo makes each joint follow the
+            command approximately like a first-order lag. The hardware code (<code>hardware/joint_model.py</code>)
+            therefore uses, for each joint,
+          </p>
+          <pre>x = [q, q&#775;]<sup>T</sup>,    u = commanded velocity,    A = [[0, 1], [0, &minus;1/&tau;]],    B = [[0], [1/&tau;]],    C = [1, 0]</pre>
+          <p>
+            This model has an integrator (eigenvalue 0) instead of the stable servo of the simulation, so the angle
+            would drift without feedback. It is controllable and observable from the encoder angle (rank 2), but
+            <em>not</em> observable from velocity alone (rank 1), so the encoder angle is essential. The time constant
+            &tau; is identified on the real arm with <code>hardware/identify_joint_lag.py</code>.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Reproducing These Results</h3>
+        <div class="content has-text-justified">
+          <pre>python final_simulation/model_analysis.py</pre>
+          <p>
+            The script runs in a few seconds, needs only <code>mujoco</code>, <code>numpy</code>, <code>scipy</code>
+            and <code>matplotlib</code>, and writes <code>model_analysis_results.json</code> together with the two
+            figures in <code>static/images/</code>.
+          </p>
         </div>
       </div>
     </div>
@@ -112,11 +399,150 @@
         <h2 class="title is-3">B. Sensing and Frames</h2>
         <h3 class="title is-4">Frame Diagram</h3>
         <div class="content has-text-justified">
-          <p class="todo">frame stuff here</p>
+          <p>
+            Every quantity the controller uses is expressed in the robot base frame {B}. In MuJoCo the base body sits
+            at the world origin, so {B} is also the world frame. The table lies 0.225 m above it. The frames below come
+            straight from <code>ur3e.xml</code> and are drawn at the home pose by
+            <code>final_simulation/frame_diagram.py</code>.
+          </p>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Frame</th><th>What it is</th><th>Relative to its parent</th></tr></thead>
+            <tbody>
+              <tr><td>{B} base</td><td>Robot base and world frame, z up</td><td>&ndash;</td></tr>
+              <tr><td>{F} flange</td><td>End of wrist 3 (<code>attachment_site</code>), z along the tool</td><td>T<sub>BF</sub>(q), forward kinematics, changes with q</td></tr>
+              <tr><td>{C} camera</td><td>Optical frame of <code>wrist_camera</code>: x right, y down, z along the view direction</td><td>T<sub>FC</sub>: no rotation, offset (0, 55, 25) mm, fixed by the mount</td></tr>
+              <tr><td>{T} grasp point</td><td>Between the fingertips (<code>grasp_site</code>), the point the IK places on the cube</td><td>T<sub>FT</sub>: no rotation, offset (0, 0, 85) mm</td></tr>
+              <tr><td>(u, v)</td><td>Image pixel, with depth d from the depth image</td><td>Camera matrix K from the checkerboard calibration</td></tr>
+              <tr><td>{O} cube</td><td>Cube grasp point: centre in x, y and 37 mm above the fitted table plane</td><td>Measured in {B}</td></tr>
+            </tbody>
+          </table>
+          <figure class="image" style="margin: 1.5rem 0;">
+            <img src="./static/images/06_frame_diagram.png" alt="Frame diagram at the home pose.">
+            <figcaption class="has-text-centered is-size-6">Frames at the home pose, generated from the MuJoCo model. The camera optical axis (blue at {C}) is parallel to the gripper axis (blue at {T}), so the camera looks along the fingers.</figcaption>
+          </figure>
+        </div>
+
+        <h4 class="title is-5">From Pixel to Joint Command</h4>
+        <div class="content has-text-justified">
+          <pre>1. pixel + depth  &rarr; camera     p<sub>C</sub> = d &middot; K<sup>&minus;1</sup> [u, v, 1]<sup>T</sup>
+2. camera         &rarr; base       p<sub>B</sub> = T<sub>BC</sub>(q&#770;) p<sub>C</sub>,     T<sub>BC</sub>(q&#770;) = T<sub>BF</sub>(q&#770;) &middot; T<sub>FC</sub>
+3. points in {B}  &rarr; cube {O}   RANSAC table plane, red points 8&ndash;70 mm above it, grasp point at plane + 37 mm
+4. cube {O}       &rarr; joints     IK: find q<sub>ref</sub> so that T<sub>BT</sub>(q<sub>ref</sub>) = T<sub>BF</sub>(q<sub>ref</sub>) &middot; T<sub>FT</sub> is at {O}, pointing down
+5. joints         &rarr; command    u = q<sub>ref</sub> &minus; K (x&#770; &minus; [q<sub>ref</sub>, 0]<sup>T</sup>)       (Part D)</pre>
+          <p>
+            Two details matter. First, MuJoCo cameras look along their &minus;z axis with y up, while K uses the
+            OpenCV optical convention, so the code multiplies the camera rotation by diag(1, &minus;1, &minus;1). Without
+            it, every point would appear behind the camera. Second, step 2 uses the <em>estimated</em> joint angles
+            q&#770;, not the true ones. The cube estimate therefore depends on the joint filter (Part C).
+          </p>
+        </div>
+
+        <h4 class="title is-5">How Joint Errors Move the Cube Estimate</h4>
+        <div class="content has-text-justified">
+          <p>
+            Because T<sub>BC</sub> depends on q&#770;, an error &delta;q rotates the whole measured point cloud about
+            that joint's axis. The cube estimate moves by roughly &delta;q times the distance from the joint axis to
+            the cube. The sensitivity was computed numerically at the home pose, with the cube 0.40 m from the camera:
+          </p>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Joint</th><th>Pan</th><th>Lift</th><th>Elbow</th><th>Wrist 1</th><th>Wrist 2</th><th>Wrist 3</th></tr></thead>
+            <tbody>
+              <tr><td>Cube shift (mm per mrad)</td><td>0.32</td><td>0.33</td><td>0.36</td><td>0.50</td><td>0.51</td><td>0.06</td></tr>
+            </tbody>
+          </table>
+          <p>
+            Wrist 3 hardly matters, because its axis points almost along the camera's line of sight. Combining all six
+            joints:
+          </p>
+          <ul>
+            <li>With the joint filter error of 0.18 mrad (Part C), the cube estimate moves by only <strong>0.17 mm</strong>.
+                This is about ten times smaller than the 0.9 to 1.6 mm cube error measured in Part C. The cube error is
+                therefore dominated by depth noise and segmentation, not by the frame chain.</li>
+            <li>Using the raw encoders (0.5 mrad) would give 0.46 mm, still small.</li>
+            <li>If the lift encoder failed, the best achievable angle error of 20 mrad (Part A) would shift the cube by
+                <strong>6.7 mm</strong>, a sixth of the cube's width. This is one more reason a failed encoder should
+                stop the task.</li>
+          </ul>
+          <p>
+            <strong>Limitation.</strong> In simulation, T<sub>FC</sub> is taken exactly from the XML, and the
+            checkerboard calibration is used for K. On real hardware a mount error would add directly to the
+            cube error: 1 mm of offset gives 1 mm of error, and 1 mrad of tilt gives about 0.4 mm at a 0.4 m range.
+          </p>
+        </div>
+
+        <h4 class="title is-5">Frames on the Real Robot</h4>
+        <div class="content has-text-justified">
+          <p>
+            On hardware the RealSense D435i could not be mounted on the wrist, so it is fixed on a stand beside the
+            robot (eye-to-hand). T<sub>BC</sub> is then a single constant matrix, and step 2 becomes
+            p<sub>B</sub> = T<sub>BC</sub> p<sub>C</sub>, with no joint angles in it. Joint error no longer moves the cube
+            estimate, although it still affects where the gripper goes. T<sub>BC</sub> is found with
+            <code>hardware/calibrate_handeye.py --fixed</code>: a checkerboard is fixed to the gripper and observed at
+            15 to 20 poses. The board's pose relative to the flange must be the same in every view, which gives
+            T<sub>BF,i</sub><sup>&minus;1</sup> T<sub>BC</sub> T<sub>C,board,i</sub> = constant, solved for T<sub>BC</sub>.
+          </p>
         </div>
         <h3 class="title is-4">Calibration and Noise Handling</h3>
         <div class="content has-text-justified">
-          <p class="todo">callibration </p>
+          <p>
+            <strong>Camera calibration.</strong> Every run starts with an automated calibration
+            (<code>calibrate_sim_camera.py</code>). An 8 &times; 5 inner-corner checkerboard with 15 mm squares is added to
+            the MuJoCo scene at run time, without changing the XML on disk. The arm then moves the wrist camera to 25
+            viewpoints, each planned with IK and checked for table collisions. In a typical run about 150 candidate poses
+            fail IK and about 40 are rejected for hitting the table before 25 are accepted. Corners are refined with
+            <code>cornerSubPix</code>. Twenty views are used to estimate K with <code>calibrateCamera</code>, and five are
+            held out and fitted with <code>solvePnP</code> to test the result. Distortion is fixed at zero because the
+            renderer is an ideal pinhole camera. After calibration the board is removed and the estimated K is used for
+            all depth back-projection.
+          </p>
+          <p>
+            Each of the ten trials in Part E calibrated afresh with a different random seed, so the calibration was
+            repeated ten times:
+          </p>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Quantity (10 calibrations)</th><th>Mean</th><th>Range</th><th>Renderer reference</th></tr></thead>
+            <tbody>
+              <tr><td>Training reprojection RMS (px)</td><td>0.041</td><td>0.037 to 0.048</td><td>&ndash;</td></tr>
+              <tr><td>Held-out reprojection RMS (px)</td><td>0.043</td><td>0.037 to 0.051</td><td>&ndash;</td></tr>
+              <tr><td>Focal length f (px)</td><td>208.47</td><td>206.46 to 209.58</td><td>207.85</td></tr>
+              <tr><td>Principal point error c<sub>x</sub> / c<sub>y</sub> (px)</td><td>&minus;0.02 / 0.33</td><td>&minus;0.30 to 0.15 / &minus;0.29 to 1.06</td><td>(159.5, 119.5)</td></tr>
+            </tbody>
+          </table>
+          <p>
+            The reprojection error is tiny and consistent, yet the focal length varies by 3.1 px (1.5%) between
+            calibrations. The held-out views do not reveal this, because <code>solvePnP</code> can absorb a focal-length
+            error by placing the board slightly nearer or further away. As the calibration script itself notes, low
+            reprojection error shows that K fits the images; it does not prove that the metric scale is right. This
+            matters for the task: Part E shows that the cube error rises by 0.43 mm for every pixel of focal-length
+            error (correlation 0.96). A held-out test against a board at a <em>known</em> distance would expose the
+            scale error. That check was not done.
+          </p>
+        </div>
+        <div class="content has-text-justified">
+          <p>
+            <strong>Noise handling.</strong> Two sensors are corrupted on purpose in simulation, and each stage of the
+            perception pipeline is designed to reduce the effect on the cube estimate:
+          </p>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Source or stage</th><th>Model or setting</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td>Joint encoders</td><td>Gaussian, &sigma; = 0.5 mrad</td><td>Filtered by the joint Kalman filter, with R = &sigma;&sup2;I (Part C)</td></tr>
+              <tr><td>Depth image</td><td>Gaussian, &sigma; = 4 mm per pixel, plus 1% random dropout (depth set to 0)</td><td>Simulates RGB-D noise and missing returns</td></tr>
+              <tr><td>Valid depth</td><td>0.15 to 1.5 m, zeros discarded</td><td>Removes dropouts and readings too close or too far</td></tr>
+              <tr><td>Workspace crop and downsampling</td><td>Points kept only inside the table volume in {B}; 3 mm voxel grid (Open3D)</td><td>Removes the arm and background; evens out point density</td></tr>
+              <tr><td>Table plane</td><td>RANSAC, 3 mm inlier threshold, 350 iterations; rejected if under 35% inliers or the normal is not near vertical (n<sub>z</sub> &lt; 0.9)</td><td>Finds the table robustly and rejects bad frames instead of passing them on</td></tr>
+              <tr><td>Segmentation</td><td>Red in HSV, 8 to 70 mm above the plane, largest connected blob of at least 12 px</td><td>Ignores red noise on the table and isolated pixels</td></tr>
+              <tr><td>Cube x, y</td><td>Midpoint of the 2nd and 95th percentiles of the blob points</td><td>Ignores edge outliers instead of using the mean</td></tr>
+              <tr><td>Cube height</td><td>Fitted table plane + 37 mm, not the cube's own depth</td><td>Height comes from thousands of table points, so per-pixel noise averages out</td></tr>
+              <tr><td>Temporal filtering</td><td>Constant-velocity Kalman filter at 10 Hz; grasp target locked from a measurement no older than 0.3 s</td><td>Smooths motion and stops stale data being used (Part C)</td></tr>
+            </tbody>
+          </table>
+          <p>
+            Across the ten trials, 4 mm of per-pixel depth noise produced only 0.86 to 2.39 mm RMS error in the cube's
+            x, y position, and every vision frame during tracking produced a valid measurement. The weak point is the 3 mm RANSAC
+            threshold: with 8 mm depth noise most table points fall outside it, the 35% inlier check fails on every
+            frame, and the cube is never acquired (Part C).
+          </p>
         </div>
       </div>
     </div>
@@ -400,7 +826,94 @@ A = [[0, I], [&minus;M<sup>&minus;1</sup>K<sub>p</sub>, &minus;M<sup>&minus;1</s
       <div class="column is-full-width">
         <h2 class="title is-3">E. Results and Evaluation</h2>
         <div class="content has-text-justified">
-          <p class="todo">Quantitive resulets</p>
+          <p>
+            The full pipeline was run ten times (seeds 1 to 10) with
+            <code>evaluated_calibrated_pick.py</code>. Each trial recalibrated the camera from scratch and drew new
+            encoder and depth noise (4 mm depth noise, 1% dropout). Ground truth was used only to score the trials.
+            <code>summarise_trials.py</code> collects the results into <code>trials_summary.csv</code> and the figure
+            below.
+          </p>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Metric (10 trials)</th><th>Mean</th><th>Range</th></tr></thead>
+            <tbody>
+              <tr><td>Successful picks (cube lifted and held)</td><td colspan="2">10 / 10</td></tr>
+              <tr><td>Grasp target error when locked (x, y)</td><td>0.96 mm</td><td>0.25 to 1.63 mm</td></tr>
+              <tr><td>Cube x, y RMSE while tracking, filtered / raw</td><td>1.75 / 1.75 mm</td><td>0.86 to 2.39 mm</td></tr>
+              <tr><td>Cube filter x, y ANEES (expected 2)</td><td>0.16</td><td>0.03 to 0.28</td></tr>
+              <tr><td>Joint angle RMSE (mean of 6 joints)</td><td>0.169 mrad</td><td>0.167 to 0.171 mrad</td></tr>
+              <tr><td>Joint velocity RMSE (mean of 6 joints)</td><td>3.47 mrad/s</td><td>3.44 to 3.51 mrad/s</td></tr>
+              <tr><td>Joint filter ANEES (expected 12)</td><td>3.58</td><td>3.46 to 3.67</td></tr>
+              <tr><td>Worst joint tracking RMSE (wrist 3)</td><td>26.7 mrad</td><td>26.6 to 27.0 mrad</td></tr>
+              <tr><td>Vision frames with a valid cube measurement</td><td colspan="2">100% in every trial</td></tr>
+            </tbody>
+          </table>
+          <figure class="image" style="margin: 1.5rem 0;">
+            <img src="./static/images/08_repeated_trials.png" alt="Results of ten repeated trials.">
+            <figcaption class="has-text-centered is-size-6">Left: grasp target error and cube tracking error for each trial. Right: both errors plotted against the focal length found by that trial's calibration.</figcaption>
+          </figure>
+        </div>
+
+        <h3 class="title is-4">What Drives the Error</h3>
+        <div class="content has-text-justified">
+          <p>
+            The joint-side results barely change between trials (joint angle RMSE 0.167 to 0.171 mrad), but the cube
+            error varies almost threefold. The cause is the camera calibration. The cube x, y RMSE correlates with the
+            focal length estimated in that trial (r = 0.96), increasing by 0.43 mm per pixel of focal length. The
+            back-projection x = (u &minus; c<sub>x</sub>) Z / f scales every lateral offset by 1/f. A focal length that is
+            too large therefore pulls points towards the optical axis and shifts the cube estimate. The frame chain
+            contributes only about 0.17 mm (Part B), so the calibration is the largest error source in the system.
+            The fit does not reach zero error at the true focal length (207.85 px). This suggests a second, smaller
+            bias, possibly from the percentile-based centre estimate. That was not investigated further.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Robustness and Failure Cases</h3>
+        <div class="content has-text-justified">
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Condition</th><th>Result</th><th>Diagnosed cause</th></tr></thead>
+            <tbody>
+              <tr><td>Nominal noise, 10 seeds</td><td>10/10 picks</td><td>&ndash;</td></tr>
+              <tr><td>Depth noise doubled to 8 mm (Part C)</td><td>Cube never acquired; aborted at 12 s</td><td>The 3 mm RANSAC threshold is below the noise level, so every frame fails the 35% inlier check (Part B). A threshold scaled with the noise level, e.g. 2&ndash;3&sigma;, would be the fix.</td></tr>
+              <tr><td>Cube filter R scaled by 0.03 (Part C)</td><td>ANEES 2.9, close to the expected 2; RMSE still 1 to 2 mm</td><td>The default R (6 mm) is about six times the actual measurement error, which makes the filter underconfident.</td></tr>
+              <tr><td>Encoder failure (analysis, Part A)</td><td>Rank stays 12, but the lost angle is known no better than 20 mrad, shifting the cube estimate by 6.7 mm</td><td>Observability is too weak in practice; the task should stop.</td></tr>
+            </tbody>
+          </table>
+          <p>
+            <strong>Trade-off between consistency and responsiveness.</strong> Both filters are underconfident
+            (ANEES 3.6 against 12 for the joints, 0.16 against 2 for the cube). Their covariances are larger than the
+            actual errors, so the &plusmn;2&sigma; bounds are safe but pessimistic. Shrinking Q or R would make the
+            filters consistent and smoother. It would also make them slower to react to unmodelled effects, such as
+            contact during the grasp. Since the measured errors are already small, we kept the conservative
+            settings.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Limitations</h3>
+        <div class="content has-text-justified">
+          <ul>
+            <li><strong>Start position not randomised.</strong> The brief asks for the object position to be randomised
+                between trials. In the submitted code the cube always starts at (0.30, 0.10) m, and the seed only changes
+                the sensor noise and the calibration. Robustness to start position is therefore <em>not</em>
+                demonstrated. It is the most important missing test.</li>
+            <li><strong>Only ten nominal trials.</strong> The off-nominal conditions (8 mm noise, R scaling) come from the
+                smaller runs in Part C, not from a repeated batch. No physical disturbance, such as pushing the cube or
+                the arm, was tested.</li>
+            <li><strong>Simulation only.</strong> See below.</li>
+          </ul>
+        </div>
+
+        <h3 class="title is-4">Hardware Status</h3>
+        <div class="content has-text-justified">
+          <p>
+            A hardware version of the pipeline is in <code>hardware/</code>, written for the UTS lab UR3e
+            (<code>ur_rtde</code>), an OnRobot RG2 gripper and a RealSense D435i. The camera could not be mounted on the
+            wrist, so the code supports a fixed camera on a stand (eye-to-hand calibration with
+            <code>calibrate_handeye.py --fixed</code>). Its velocity-command joint model is described in Part A. It
+            was tested only in its built-in mock mode, which simulates the robot, camera and gripper. In that mode it
+            completed 32/32 picks across nominal, joint-disturbance, occlusion and triple-noise conditions, and the
+            eye-to-hand solver recovered a known camera pose to within 1.5 to 3 mm in a self-test. <strong>No trials
+            were run on the real robot</strong>, so no hardware results are reported here.
+          </p>
         </div>
       </div>
     </div>
@@ -450,6 +963,9 @@ pip install -r pick_requirements.txt</pre>
               <tr><td><code>python evaluated_calibrated_pick.py --seed 1 --depth-noise 0.008</code></td><td>Raises the simulated depth noise to 8 mm. <code>--dropout 0.10</code> sets the depth dropout probability.</td></tr>
               <tr><td><code>python evaluated_calibrated_pick.py --seed 1 --block-r-scale 0.03</code></td><td>Scales the cube filter's measurement covariance R. <code>--block-q-scale</code> scales its process covariance Q. Neither changes the simulated sensor noise.</td></tr>
               <tr><td><code>python evaluated_calibrated_pick.py --seed 1 --no-show</code></td><td>Saves the figures without opening them.</td></tr>
+              <tr><td><code>python model_analysis.py</code></td><td>Part A: rebuilds the joint model, runs the controllability, observability and pose analysis, and validates it against MuJoCo. Takes a few seconds.</td></tr>
+              <tr><td><code>python frame_diagram.py</code></td><td>Part B: draws the frame diagram and computes how joint error moves the cube estimate.</td></tr>
+              <tr><td><code>python summarise_trials.py trials</code></td><td>Part E: summarises repeated trials saved with <code>--results trials/nominal_s&lt;seed&gt; --calibration-folder trials/nominal_s&lt;seed&gt;/calibration</code> into <code>trials_summary.csv</code> and figure 08.</td></tr>
             </tbody>
           </table>
           <p>
@@ -484,10 +1000,11 @@ pip install -r pick_requirements.txt</pre>
       <table class="table is-bordered is-striped is-fullwidth">
         <thead><tr><th>Member</th><th>Contribution</th></tr></thead>
         <tbody>
-          <tr><td>Shuban Golkonda</td><td class="todo"></td></tr>
-          <tr><td>Jaylee Ah Hen</td><td class="todo"></td></tr>
-          <tr><td>Nicole Paligies</td><td class="todo"></td></tr>
-          <tr><td>Aaron Valdy</td><td class="todo"></td></tr>
+          <tr><td>Shuban Golkonda</td><td>Led the LQR joint controller and collision-free trajectory planning (Part D). Edited the demo video and presented the introduction and control sections.</td></tr>
+          <tr><td>Jaylee Ah Hen</td><td>Led the automated camera calibration and the evaluation of results (Parts B and E). Presented the calibration and quantitative results in the video.</td></tr>
+          <tr><td>Nicole Paligies</td><td>Led the system modelling with the controllability and observability analysis (Part A) and the frame diagram (Part B). Prepared the hardware pipeline for the lab UR3e. Presented the modelling section in the video.</td></tr>
+          <tr><td>Aaron Valdy</td><td>Led the joint and cube Kalman filters and the sensitivity analysis (Part C). Built the project page. Presented the estimation section in the video.</td></tr>
+          <tr><td colspan="2">All members contributed to integrating and debugging the final simulation, <code>final_simulation/</code>.</td></tr>
         </tbody>
       </table>
     </div>
@@ -499,7 +1016,11 @@ pip install -r pick_requirements.txt</pre>
   <div class="container is-max-desktop">
     <h2 class="title is-3">Generative AI Declaration</h2>
     <div class="content has-text-justified">
-      <p class="todo">Tools used and the purpose of each.</p>
+      <p>
+        Claude (Anthropic) was used throughout the project as a general assistant: to help debug code, to help
+        write and check analysis and hardware scripts, and to help draft and edit text on this page. All results
+        come from running our code, and the team reviewed, tested and edited everything that was submitted.
+      </p>
     </div>
   </div>
 </section>
@@ -509,7 +1030,7 @@ pip install -r pick_requirements.txt</pre>
   <div class="container is-max-desktop">
     <h2 class="title is-3">Acknowledgements</h2>
     <div class="content has-text-justified">
-      <p class="todo">41014 tutorials, MuJoCo, Robotics Toolbox, ur_rtde, librealsense, OpenCV, SciPy and the MuJoCo Menagerie UR3e model.</p>
+      <p>41014 tutorials, MuJoCo, Robotics Toolbox, ur_rtde, librealsense, OpenCV, SciPy and the MuJoCo Menagerie UR3e model.</p>
     </div>
   </div>
 </section>

@@ -236,7 +236,18 @@
             level, so the fitted table plane fails the 35% inlier check and every frame is rejected before the filter
             receives a measurement.
           </p>
-          <p class="todo">Add 02_joint_position_errors.png, 05_joint_consistency.png and 07_object_dashboard.png from the evaluation figures.</p>
+          <figure class="image" style="margin: 1.5rem 0;">
+            <img src="./static/images/02_joint_position_errors.png" alt="Joint angle estimation error and &plusmn;2&sigma; bounds for each joint (seed 1).">
+            <figcaption class="has-text-centered is-size-6">Joint angle estimation error and &plusmn;2&sigma; bounds for each joint (seed 1).</figcaption>
+          </figure>
+          <figure class="image" style="margin: 1.5rem 0;">
+            <img src="./static/images/05_joint_consistency.png" alt="Joint filter NEES with the pointwise 95% &chi;&sup2; interval and the expected value of 12 (seed 1).">
+            <figcaption class="has-text-centered is-size-6">Joint filter NEES with the pointwise 95% &chi;&sup2; interval and the expected value of 12 (seed 1).</figcaption>
+          </figure>
+          <figure class="image" style="margin: 1.5rem 0;">
+            <img src="./static/images/07_object_dashboard.png" alt="Cube filter: true and estimated XY path, velocity, XY NEES and vision availability during tracking (seed 1). The true y velocity shown is the commanded 18 mm/s, not the cube's average speed of about 10 mm/s.">
+            <figcaption class="has-text-centered is-size-6">Cube filter: true and estimated XY path, velocity, XY NEES and vision availability during tracking (seed 1). The true y velocity shown is the commanded 18 mm/s, not the cube's average speed of about 10 mm/s.</figcaption>
+          </figure>
         </div>
       </div>
     </div>
@@ -362,7 +373,10 @@ A = [[0, I], [&minus;M<sup>&minus;1</sup>K<sub>p</sub>, &minus;M<sup>&minus;1</s
             travelled about 117 mm rather than the 216 mm commanded, most likely because its velocity is set once
             per control step and table friction slows it in between.
           </p>
-          <p class="todo">Add 04_tracking_and_commands.png from the evaluation figures.</p>
+          <figure class="image" style="margin: 1.5rem 0;">
+            <img src="./static/images/04_tracking_and_commands.png" alt="Joint tracking error (true angle minus reference, top) and LQR correction to the position command (bottom) (seed 1).">
+            <figcaption class="has-text-centered is-size-6">Joint tracking error (true angle minus reference, top) and LQR correction to the position command (bottom) (seed 1).</figcaption>
+          </figure>
         </div>
       </div>
     </div>
@@ -382,7 +396,70 @@ A = [[0, I], [&minus;M<sup>&minus;1</sup>K<sub>p</sub>, &minus;M<sup>&minus;1</s
       <div class="column is-full-width">
         <h2 class="title is-3">Installation and Running</h2>
         <div class="content has-text-justified">
-          <p class="todo">installation steps</p>
+          <p>
+            The final simulation is in the <code>final_simulation</code> folder of the
+            <a href="https://github.com/shubangolkonda123/Sensors_Integrated_Project_SAJN">GitHub repository</a>.
+            It uses MuJoCo, NumPy, SciPy, OpenCV, Open3D, Matplotlib and the Robotics Toolbox for Python, and has
+            been run with Python 3.12 and 3.13.
+          </p>
+
+          <h3 class="title is-5">Repository Layout</h3>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Folder</th><th>Contents</th></tr></thead>
+            <tbody>
+              <tr><td><code>final_simulation/</code></td><td>Final MuJoCo pipeline: camera calibration, moving-block pick and evaluation</td></tr>
+              <tr><td><code>universal_robots_ur3e/</code></td><td>UR3e scene (<code>ur3e.xml</code>) and mesh assets, shared by all simulations</td></tr>
+              <tr><td><code>hardware/</code></td><td>Pipeline for the real UR3e, RG2 gripper and RealSense camera, with a mock mode</td></tr>
+              <tr><td><code>test_simulations/</code></td><td>Earlier development versions, kept for reference</td></tr>
+            </tbody>
+          </table>
+
+          <h3 class="title is-5">Installation</h3>
+          <pre>git clone https://github.com/shubangolkonda123/Sensors_Integrated_Project_SAJN.git
+cd Sensors_Integrated_Project_SAJN/final_simulation
+python -m venv .venv
+.venv\Scripts\activate            (Windows)
+source .venv/bin/activate         (macOS / Linux)
+pip install -r pick_requirements.txt</pre>
+          <p>
+            The scripts locate <code>universal_robots_ur3e/ur3e.xml</code> in the parent folder automatically, so
+            the XML and meshes stay where they are. A different model can be passed with <code>--model</code>.
+          </p>
+
+          <h3 class="title is-5">Running</h3>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Command (from <code>final_simulation/</code>)</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td><code>python evaluated_calibrated_pick.py --seed 1</code></td><td>Calibrates the camera, runs the pick, then scores it against ground truth and produces the figures. This is the command used for the results on this page.</td></tr>
+              <tr><td><code>python calibrated_moving_block_pick.py --seed 1</code></td><td>Calibrates the camera and runs the pick without the evaluation figures.</td></tr>
+              <tr><td><code>python calibrated_moving_block_pick.py --calibration-only</code></td><td>Runs the checkerboard calibration only.</td></tr>
+              <tr><td><code>python evaluated_calibrated_pick.py --seed 1 --depth-noise 0.008</code></td><td>Raises the simulated depth noise to 8 mm. <code>--dropout 0.10</code> sets the depth dropout probability.</td></tr>
+              <tr><td><code>python evaluated_calibrated_pick.py --seed 1 --block-r-scale 0.03</code></td><td>Scales the cube filter's measurement covariance R. <code>--block-q-scale</code> scales its process covariance Q. Neither changes the simulated sensor noise.</td></tr>
+              <tr><td><code>python evaluated_calibrated_pick.py --seed 1 --no-show</code></td><td>Saves the figures without opening them.</td></tr>
+            </tbody>
+          </table>
+          <p>
+            Two windows open during a run: the MuJoCo viewer and the wrist camera image with the detected cube. A
+            run ends 3 s after the arm reaches HOLD, and pressing Q in the camera window stops it early. A complete
+            calibration and pick takes about one minute.
+          </p>
+
+          <h3 class="title is-5">Outputs</h3>
+          <ul>
+            <li><code>results/sim_camera_calibration/</code>: estimated camera matrix (<code>camera_calibration.npz</code>), calibration report and the checkerboard images.</li>
+            <li><code>results/evaluation_&lt;date&gt;_&lt;time&gt;/</code>: <code>metrics.json</code>, <code>joint_metrics.csv</code>, <code>evaluation_log.npz</code>, <code>timeseries.csv</code>, <code>summary.json</code> and the figures in <code>figures/</code>.</li>
+          </ul>
+          <p>
+            <strong>Ground truth.</strong> Simulator ground truth for the cube and joints is read only inside the
+            <code>Evaluation</code> class of <code>moving_block_pick.py</code> and the
+            <code>DiagnosticEvaluation</code> class of <code>evaluated_calibrated_pick.py</code>. It is never passed to
+            the detection, estimation, planning or control code.
+          </p>
+          <p>
+            <strong>macOS.</strong> The MuJoCo viewer must be started with <code>mjpython</code> in place of
+            <code>python</code>. OpenCV windows cannot open under <code>mjpython</code>, so the camera window raises
+            an error on macOS. The simulation is intended to run on Windows or Linux.
+          </p>
         </div>
       </div>
     </div>

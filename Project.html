@@ -62,6 +62,22 @@
   </div>
 </section>
 
+<!-- ===================== SUMMARY ===================== -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Summary</h2>
+        <div class="content has-text-justified">
+          <p>
+              text here
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ===================== VIDEO ===================== -->
 <section class="section" id="video">
   <div class="container is-max-desktop">
@@ -111,119 +127,116 @@
         <h2 class="title is-3">C. Estimation</h2>
         <div class="content has-text-justified">
           <p>
-            The pipeline contains two estimators, both implemented in <code>estimator.py</code>.
-            <code>Target_KF</code> estimates the object position in the robot base frame from camera
-            measurements, and <code>Joint_Observer</code> estimates the joint velocities from the encoder angles.
-            The controller acts only on these two estimates. Ground truth is used in mock mode to draw the
-            synthetic image and to score each trial, and every such use is marked <code>GROUND TRUTH</code>
-            in <code>main_pick.py</code>.
+            The final simulation (<code>calibrated_moving_block_pick.py</code>, which runs
+            <code>moving_block_pick.py</code>) uses two estimators. A 12-state Kalman filter estimates the joint
+            angles and the unmeasured joint velocities from the encoders, and a 6-state constant velocity filter
+            estimates the cube position and velocity from the camera. Planning and control use only these
+            estimates. Simulator ground truth is read only by the <code>Evaluation</code> class to score each trial.
           </p>
         </div>
 
-        <h3 class="title is-4">Target Kalman Filter</h3>
+        <h3 class="title is-4">Joint State Kalman Filter</h3>
         <div class="content has-text-justified">
           <p>
-            <strong>State and process model.</strong> The state is the position of the centre of the cube's
-            top face in the base frame, <em>x</em> = [p<sub>x</sub>, p<sub>y</sub>, p<sub>z</sub>]<sup>T</sup>.
-            The object is static during a pick, so a constant position model is used:
+            <strong>Model.</strong> The filter uses the discrete 12-state joint model described in Part D, with
+            x = [q, q&#775;]<sup>T</sup>, dt = 0.01 s and measurement y = q from six encoders:
           </p>
-          <pre>x(k+1) = x(k) + w(k),    w ~ N(0, Q),    Q = &sigma;<sub>p</sub>&sup2; I,    &sigma;<sub>p</sub> = 0.2 mm per step</pre>
+          <pre>x(k+1) = A x(k) + B u(k) + w(k),    y(k) = C x(k) + v(k),    C = [I, 0]</pre>
           <p>
-            At the 50 Hz loop rate this is a random walk of about 1.4 mm/&radic;s. Q is non-zero so that the
-            filter absorbs slow kinematic and hand-eye calibration error and its uncertainty grows when no
-            measurement is available.
+            The observability matrix of (A, C) has full rank 12, so the joint velocities are recoverable from the
+            encoder angles alone. The prediction uses the command u that was actually applied after limiting.
           </p>
-          <p>
-            <strong>Measurement model.</strong> <code>detection.py</code> segments the red cube in HSV, locates
-            the top face in the depth image and back-projects it to a camera frame point P<sub>Cam</sub>. This
-            point is transformed into the base frame through the calibrated transform T<sub>Base,Cam</sub>,
-            so the measurement observes the state directly:
-          </p>
-          <pre>z(k) = x(k) + v(k),    v ~ N(0, R(k)),    H = I</pre>
-          <p>
-            <strong>Measurement covariance.</strong> R(k) is computed for every detection from the sensor noise
-            model in <code>config.py</code>:
-          </p>
+          <p><strong>Noise covariances.</strong></p>
           <ul>
-            <li>Depth: &sigma;<sub>z</sub> = 0.005 Z&sup2; + 0.001 m, since stereo depth error grows with the square of range.</li>
-            <li>Lateral: &sigma;<sub>x</sub> = 1.5 px &middot; Z / f<sub>x</sub> and &sigma;<sub>y</sub> = 1.5 px &middot; Z / f<sub>y</sub>, combined in quadrature with the lateral error that a depth error produces.</li>
-            <li>The covariance is formed in the camera frame and rotated into the base frame,
-              R<sub>Base</sub> = R<sub>bc</sub> R<sub>Cam</sub> R<sub>bc</sub><sup>T</sup>, because the camera
-              depth axis is not aligned with the base frame axes.</li>
+            <li>R = &sigma;<sub>enc</sub>&sup2; I<sub>6</sub> with &sigma;<sub>enc</sub> = 0.5 mrad, equal to the noise added to the simulated encoders.</li>
+            <li>Q = G (&sigma;<sub>a</sub>&sup2; I<sub>6</sub>) G<sup>T</sup> + 10<sup>&minus;10</sup> I<sub>12</sub>, with
+              G = [&frac12;dt&sup2; I; dt I] and &sigma;<sub>a</sub> = 2 rad/s&sup2;. This treats unmodelled joint
+              acceleration (inertia changes away from the linearisation pose, contact and friction) as white noise.</li>
+            <li>P<sub>0</sub> = diag(&sigma;<sub>enc</sub>&sup2; I, (0.05 rad/s)&sup2; I).</li>
           </ul>
           <p>
-            <strong>Update.</strong> With H = I the innovation covariance is S = P + R and the gain is
-            K = P S<sup>&minus;1</sup>. The covariance is updated in Joseph form,
-            P = (I &minus; K) P (I &minus; K)<sup>T</sup> + K R K<sup>T</sup>, which keeps P symmetric and
-            positive definite under rounding. The first accepted measurement initialises the filter with
-            x<sub>0</sub> = z<sub>0</sub> and P<sub>0</sub> = R<sub>0</sub>.
+            <strong>Update.</strong> Each 10 ms step runs the standard predict and correct cycle. The gain is
+            K = P C<sup>T</sup>(C P C<sup>T</sup> + R)<sup>&minus;1</sup>, and the covariance is updated in Joseph
+            form, P = (I &minus; KC) P (I &minus; KC)<sup>T</sup> + K R K<sup>T</sup>, then symmetrised to keep P
+            positive definite under rounding.
           </p>
+        </div>
+
+        <h3 class="title is-4">Cube Constant Velocity Filter</h3>
+        <div class="content has-text-justified">
           <p>
-            <strong>Outlier gating.</strong> Each measurement is tested with the normalised innovation squared,
-            NIS = y<sup>T</sup> S<sup>&minus;1</sup> y. For a consistent filter NIS follows a &chi;&sup2;
-            distribution with 3 degrees of freedom, so a measurement is rejected when NIS &gt; 7.815 (the 95%
-            bound). After 15 consecutive rejections the filter assumes the object has moved and re-initialises
-            from the latest measurement.
+            <strong>Measurement.</strong> Each depth frame (every 0.1 s) is back-projected with the camera matrix
+            K estimated by the checkerboard calibration (Part B), then transformed into the base frame using the
+            camera pose from forward kinematics at the <em>estimated</em> joint angles. The table plane
+            is fitted with RANSAC, red pixels between 8 mm and 70 mm above the plane are segmented, and the cube
+            centre in x and y is taken from the extent of its visible points. The measured grasp point is placed
+            37 mm above the fitted table surface, which is 17 mm above the cube centre by design.
           </p>
-          <p><strong>Use in the task.</strong></p>
+          <p><strong>Model.</strong> The state is x = [p<sub>x</sub>, p<sub>y</sub>, p<sub>z</sub>, v<sub>x</sub>, v<sub>y</sub>, v<sub>z</sub>]<sup>T</sup> with a constant velocity model and a direct position measurement:</p>
+          <pre>F = [[I, &Delta;t I], [0, I]],   &Delta;t = 0.1 s,    H = [I, 0]</pre>
+          <ul>
+            <li>Q = diag((1 mm)&sup2; I, (15 mm/s)&sup2; I), allowing small changes in cube velocity between frames.</li>
+            <li>R = diag((6 mm)&sup2;, (6 mm)&sup2;, (5 mm)&sup2;) for the camera position measurement.</li>
+            <li>The filter initialises on the first detection with zero velocity and
+              P<sub>0</sub> = diag((10 mm)&sup2; I, (0.1 m/s)&sup2; I).</li>
+          </ul>
+          <p>
+            Both F and H are linear, so although the class is named an EKF it reduces to a standard linear Kalman
+            filter, with the same gain and Joseph form update as the joint filter. The filter predicts and updates
+            on each frame while the cube moves. When the motion phase ends its velocity estimate is set to zero, and
+            the latest camera measurement is locked as the grasp target.
+          </p>
+        </div>
+
+        <h3 class="title is-4">Estimation Results</h3>
+        <div class="content has-text-justified">
+          <p>
+            Results from <code>evaluated_calibrated_pick.py</code> over three trials with different noise seeds
+            (4 mm depth noise, 1% dropout). Ground truth is read only inside its evaluation class. Cube errors are
+            scored at each vision frame while the cube moves.
+          </p>
           <table class="table is-bordered is-striped is-fullwidth">
-            <thead><tr><th>Phase</th><th>Filter behaviour</th></tr></thead>
+            <thead><tr><th>Quantity</th><th>Result</th></tr></thead>
             <tbody>
-              <tr><td>SEARCH</td><td>The arm is stationary. Measurements accumulate until there are at least 15 updates and the standard deviation on every axis is below 4 mm. The trial aborts if this is not reached within 10 s or if the estimate lies outside the workspace.</td></tr>
-              <tr><td>APPROACH</td><td>Predict and update continue and the estimate refines the goal pose. When the object is occluded only the prediction runs, so P grows at the rate set by Q.</td></tr>
-              <tr><td>DESCEND onward</td><td>The estimate and its standard deviation are locked and the filter is frozen. The grasp uses the locked estimate.</td></tr>
+              <tr><td>Joint angle estimate RMSE</td><td>0.15 to 0.18 mrad</td></tr>
+              <tr><td>Joint velocity estimate RMSE</td><td>3.3 to 3.8 mrad/s</td></tr>
+              <tr><td>Joint angle samples inside &plusmn;2&sigma;</td><td>99.1 to 99.6% per joint</td></tr>
+              <tr><td>Joint filter ANEES (expected 12)</td><td>3.53 to 3.57</td></tr>
+              <tr><td>Cube XY position RMSE, filtered</td><td>0.90 to 1.63 mm</td></tr>
+              <tr><td>Cube XY position RMSE, raw camera measurement</td><td>0.91 to 1.63 mm</td></tr>
+              <tr><td>Cube filter XY ANEES (expected 2)</td><td>0.04 to 0.13</td></tr>
+              <tr><td>Estimated cube speed in y while moving</td><td>about 10 mm/s</td></tr>
             </tbody>
           </table>
-        </div>
-
-        <h3 class="title is-4">Joint Velocity Observer</h3>
-        <div class="content has-text-justified">
           <p>
-            <strong>Model.</strong> Each joint under <code>speedJ</code> is modelled as a first-order velocity
-            servo (<code>joint_model.py</code>) with state x = [q, q&#775;]<sup>T</sup>, input u equal to the
-            commanded joint speed and output y = q:
-          </p>
-          <pre>A = [[0, 1], [0, &minus;1/&tau;]],    B = [0, 1/&tau;]<sup>T</sup>,    C = [1, 0],    &tau; = 0.06 s</pre>
-          <p>
-            Exact zero-order hold discretisation at dt = 0.02 s gives
-            A<sub>d</sub> = [[1, 0.0170], [0, 0.7165]] and B<sub>d</sub> = [0.0030, 0.2835]<sup>T</sup>.
-            The observability matrix has rank 2 when q is measured and rank 1 when only q&#775; is measured,
-            so the observer is driven by the encoder angles.
+            <strong>Joint filter consistency.</strong> ANEES of about 3.5 against an expected 12 shows the joint
+            filter is underconfident: its covariance is larger than the actual error, which is also why more than
+            99% of samples lie inside &plusmn;2&sigma;. The likely cause is the process noise, since
+            &sigma;<sub>a</sub> = 2 rad/s&sup2; overstates the unmodelled acceleration in simulation. Reducing Q
+            would bring ANEES towards 12 and smooth the velocity estimate, at the cost of a slower response to
+            model error such as contact during the grasp.
           </p>
           <p>
-            <strong>Observer.</strong> A Luenberger observer in current-estimator form predicts with the model
-            and corrects with the new encoder reading:
-          </p>
-          <pre>x&#770;&#8315; = A<sub>d</sub> x&#770; + B<sub>d</sub> u(k&minus;1),    x&#770; = x&#770;&#8315; + L (q<sub>meas</sub> &minus; C x&#770;&#8315;)</pre>
-          <p>
-            The same two-state model and gain are applied to all six joints. Because the system is observable,
-            the error eigenvalues can be placed by choice of gain. L is obtained by pole placement on the dual
-            system (A<sub>d</sub><sup>T</sup>, C<sup>T</sup>) with continuous poles at &minus;40 and &minus;45 rad/s
-            mapped by z = e<sup>s&middot;dt</sup>, giving L = [0.861, 4.870]<sup>T</sup>. Because the correction
-            uses the predicted state, the implemented error dynamics are (I &minus; LC) A<sub>d</sub>, with
-            eigenvalues 0.164 and 0.609 (about &minus;90 and &minus;25 rad/s). The LQR closed-loop poles are at
-            about &minus;17.4 &plusmn; 5.4j rad/s, so the slowest observer pole is about 1.4 times faster than the
-            controller, below the commonly recommended ratio of 2 to 5 times.
+            <strong>Cube filter consistency.</strong> The cube filter is strongly underconfident, with XY ANEES
+            between 0.04 and 0.13 against an expected 2, because R assumes 6 mm measurement noise while the
+            calibrated camera measurement error is about 1 mm. The filtered and raw position errors are equal to
+            within 0.02 mm, so with this R the filter follows the measurements closely and adds little smoothing.
+            Scaling R by 0.03 (to about 1 mm standard deviation) raised the XY ANEES to 2.9, close to the expected
+            value, while the position RMSE stayed between 1 and 2 mm.
           </p>
           <p>
-            <strong>Separation principle.</strong> The LQR acts on the observer estimate in place of the true
-            state. For a linear plant with an exact model the closed-loop poles are the union of the regulator
-            and observer poles, so the two were designed separately. The observer is driven by the previous
-            command sent to the robot after clipping, so it sees the input that was actually applied.
+            <strong>Cube velocity.</strong> The estimated cube speed settles near 10 mm/s, which agrees with the
+            cube's actual travel of about 117 mm in 12 s (9.8 mm/s). The evaluation script records the true
+            velocity immediately after the commanded 18 mm/s is applied each step, so its reported velocity error
+            of about 8 mm/s reflects the commanded value rather than the cube's average motion.
           </p>
           <p>
-            <strong>Validation.</strong> The UR controller also reports measured joint speed. This signal is not
-            fed to the observer and is logged only to compare against the estimate (panel 2 of
-            <code>plot_trial.py</code>).
+            <strong>Robustness.</strong> With depth noise raised to 8 mm the cube was never acquired and the task
+            aborted at 12 s. The likely cause is the 3 mm RANSAC inlier threshold, which is well below this noise
+            level, so the fitted table plane fails the 35% inlier check and every frame is rejected before the filter
+            receives a measurement.
           </p>
-        </div>
-
-        <h3 class="title is-4">Estimation Results (mock mode, fixed camera)</h3>
-        <div class="content has-text-justified">
-          <p>
-            results here
-          </p>
-          <p class="todo">Add the estimate &plusmn;2&sigma; figure, the NIS plot and the observer versus measured q&#775; figure from plot_trial.py.</p>
+          <p class="todo">Add 02_joint_position_errors.png, 05_joint_consistency.png and 07_object_dashboard.png from the evaluation figures.</p>
         </div>
       </div>
     </div>
@@ -234,7 +247,7 @@
         <h2 class="title is-3">D. Control</h2>
         <div class="content has-text-justified">
           <p>
-            Control is implemented in <code>moving_block_pick.py</code> in two layers. A task layer turns the
+            Control is implemented in <code>moving_block_pick.py</code> (launched through <code>calibrated_moving_block_pick.py</code>) in two layers. A task layer turns the
             block estimate into joint-space reference trajectories, and a discrete LQR running at 100 Hz tracks
             those references using the joint Kalman filter estimate. The controller acts only on estimated
             states, and simulator ground truth is read only by the evaluation logger.
@@ -299,9 +312,9 @@ A = [[0, I], [&minus;M<sup>&minus;1</sup>K<sub>p</sub>, &minus;M<sup>&minus;1</s
         <h3 class="title is-4">Tracking the Moving Block</h3>
         <div class="content has-text-justified">
           <p>
-            The block moves in the &minus;y direction at 18 mm/s for 12 s (about 0.22 m) and then stops. While
-            it moves, a constant velocity EKF with state [p, v] (6 states) fuses the depth-based block
-            measurements every 0.1 s. The arm follows the block with position-based visual servoing (PBVS):
+            The cube starts at (0.30, 0.10) m and is commanded to move in the &minus;y direction at 18 mm/s for
+            12 s, after which it stops. While it moves,
+            the constant velocity filter described in Part C fuses the camera measurements every 0.1 s. The arm follows the block with position-based visual servoing (PBVS):
             the hover goal is the EKF position estimate raised by 10 cm, and a new 0.8 s joint trajectory to that
             goal is planned every 0.5 s. Joint goals come from numerical inverse kinematics
             (<code>scipy.optimize.least_squares</code>) with a fixed downward gripper orientation, and
@@ -310,7 +323,7 @@ A = [[0, I], [&minus;M<sup>&minus;1</sup>K<sub>p</sub>, &minus;M<sup>&minus;1</s
           <table class="table is-bordered is-striped is-fullwidth">
             <thead><tr><th>State</th><th>Control behaviour</th></tr></thead>
             <tbody>
-              <tr><td>TRACK</td><td>Hover 10 cm above the EKF block estimate and replan every 0.5 s. After the block stops and 0.5 s has passed, lock the latest camera measurement as the grasp target once the arm has settled within 0.025 rad. Abort if the block is not acquired within 12 s or tracking exceeds 35 s.</td></tr>
+              <tr><td>TRACK</td><td>Hover 10 cm above the filter's cube estimate and replan every 0.5 s. After the cube stops and 0.5 s has passed, lock the latest camera measurement (no older than 0.3 s) as the grasp target once the arm has settled within 0.025 rad. Abort if the cube is not acquired within 12 s or tracking exceeds 35 s.</td></tr>
               <tr><td>DESCEND</td><td>4 s descent to the locked grasp target. Advance when the tool is within 8 mm.</td></tr>
               <tr><td>CLOSE</td><td>Close the fingers over 1.5 s, then wait to 2.5 s.</td></tr>
               <tr><td>LIFT / HOLD</td><td>Lift 8 cm over 4 s, then hold.</td></tr>
@@ -318,17 +331,38 @@ A = [[0, I], [&minus;M<sup>&minus;1</sup>K<sub>p</sub>, &minus;M<sup>&minus;1</s
           </table>
           <p>
             Each plan is rejected if any joint would move more than 1.5 rad, which prevents IK branch jumps, or if
-            sampled configurations along the path intersect the table. A rejected plan, a timeout or a lost
-            target moves the task to ABORT, which holds the estimated current position.
+            sampled configurations along the path intersect the table. A rejected plan, a timeout or a lost target
+            moves the task to ABORT, which holds the estimated current position.
           </p>
         </div>
 
         <h3 class="title is-4">Control Results</h3>
         <div class="content has-text-justified">
           <p>
- test
+            Three trials with different noise seeds all completed the pick. Because the task timing follows the
+            cube motion schedule, every trial entered DESCEND at 12.5 s and reached HOLD at 24.0 s.
           </p>
-          <p class="todo">Add the joint tracking and block EKF figures, and results for randomised start positions and block speeds.</p>
+          <table class="table is-bordered is-striped is-fullwidth">
+            <thead><tr><th>Joint</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th></tr></thead>
+            <tbody>
+              <tr><td>Tracking RMSE, true angle against reference (mrad)</td><td>8.1</td><td>3.5 to 3.8</td><td>16.1 to 17.8</td><td>5.5 to 5.6</td><td>2.4</td><td>26.7 to 26.8</td></tr>
+              <tr><td>RMS command increment per step, seed 1 (mrad)</td><td>1.8</td><td>1.3</td><td>2.2</td><td>1.3</td><td>0.8</td><td>2.0</td></tr>
+            </tbody>
+          </table>
+          <p>
+            Tracking error is largest on joints 3 and 6, which make the largest motions while the arm follows the
+            cube and is redirected by each 0.5 s replan. The RMS command increment stays well below the 12 mrad
+            rate limit. The tracking error is roughly 14 to 180 times the joint angle estimation error, so
+            tracking is limited by the changing reference and the command limits rather than by the estimator.
+          </p>
+          <p>
+            <strong>Limitations.</strong> The hover goal uses the estimated position only, so the arm lags the cube
+            by the replanning interval; the estimated velocity could be used to lead the target. The end of the cube
+            motion is taken from the known schedule rather than detected from the estimated velocity. The cube
+            travelled about 117 mm rather than the 216 mm commanded, most likely because its velocity is set once
+            per control step and table friction slows it in between.
+          </p>
+          <p class="todo">Add 04_tracking_and_commands.png from the evaluation figures.</p>
         </div>
       </div>
     </div>
